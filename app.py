@@ -84,31 +84,13 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 pasos = directions[0]['legs'][0]['steps']
                 elevacion_total = 0
                 
-                st.subheader("Resultados de la Telemetría")
+                st.subheader("Resultados de la Telemetría (Mapa Interactivo)")
                 
-                # --- 1. DIBUJAR EL MAPA DE LA RUTA ---
+                # --- 1. PREPARACIÓN DE VARIABLES GLOBALES ---
                 ruta_coords = googlemaps.convert.decode_polyline(directions[0]['overview_polyline']['points'])
                 lats = [punto['lat'] for punto in ruta_coords]
                 lngs = [punto['lng'] for punto in ruta_coords]
                 
-                fig_mapa = go.Figure(go.Scattermap(
-                    mode="lines",
-                    lon=lngs,
-                    lat=lats,
-                    line=dict(width=5, color='#E50914'),
-                    name="Ruta"
-                ))
-                
-                fig_mapa.update_layout(
-                    map_style="open-street-map",
-                    map_zoom=6.5,
-                    map_center={"lat": sum(lats)/len(lats), "lon": sum(lngs)/len(lngs)},
-                    margin={"r":0, "t":0, "l":0, "b":0},
-                    height=450
-                )
-                st.plotly_chart(fig_mapa, use_container_width=True)
-                
-                # --- 2. PREPARACIÓN DE VARIABLES PARA GRÁFICA Y BUCLE ---
                 x_dist = [0]
                 y_elev = []
                 y_wind = [0]
@@ -124,7 +106,7 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 dir_viento_actual = 0
                 tramos_ui = []
                 
-                # --- 3. PROCESAMIENTO TRAMO A TRAMO ---
+                # --- 2. PROCESAMIENTO TRAMO A TRAMO ---
                 for i, paso in enumerate(pasos):
                     lat1, lon1 = paso['start_location']['lat'], paso['start_location']['lng']
                     lat2, lon2 = paso['end_location']['lat'], paso['end_location']['lng']
@@ -174,7 +156,7 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                     
                     hora_actual_ruta += timedelta(hours=tiempo_tramo_horas)
                 
-                # --- 4. DIBUJAR LA GRÁFICA INTERACTIVA ---
+                # --- 3. DIBUJAR LA GRÁFICA INTERACTIVA ---
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                 fig.add_trace(go.Scatter(x=x_dist, y=y_elev, name="Elevación (m)", fill='tozeroy', mode='lines', line=dict(color='rgba(150, 150, 150, 0.8)')), secondary_y=False)
                 fig.add_trace(go.Scatter(x=x_dist, y=y_wind, name="Viento en contra (km/h)", mode='lines', line=dict(color='red', width=2)), secondary_y=True)
@@ -185,6 +167,43 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 fig.update_yaxes(title_text="Viento (km/h) [+ Contra / - A favor]", secondary_y=True)
                 
                 st.plotly_chart(fig, use_container_width=True)
+
+                # --- 4. MAPA CON HOVER DE DATOS EN LA RUTA ---
+                # Alinear los datos interpolando (simplificado) para que coincidan con la ruta geométrica completa
+                hover_texts = []
+                # Distribuimos los datos a lo largo de los puntos del mapa de forma aproximada
+                puntos_por_tramo = max(1, len(lats) // len(y_elev))
+                for i in range(len(lats)):
+                    idx_aprox = min(i // puntos_por_tramo, len(y_elev) - 1)
+                    viento_redondeado = round(y_wind[idx_aprox], 1)
+                    tipo_viento_hover = "Viento en contra" if viento_redondeado > 0 else "Viento a favor"
+                    
+                    texto = (f"📍 Elevación: {round(y_elev[idx_aprox], 1)}m<br>"
+                             f"💨 {tipo_viento_hover}: {abs(viento_redondeado)} km/h<br>"
+                             f"📏 Km estimado: {round(x_dist[idx_aprox], 1)}")
+                    hover_texts.append(texto)
+
+                fig_mapa = go.Figure(go.Scattermap(
+                    mode="lines+markers",
+                    lon=lngs,
+                    lat=lats,
+                    line=dict(width=4, color='#E50914'),
+                    marker=dict(size=4, opacity=0), # Marcadores invisibles, solo sirven para captar el ratón
+                    name="Ruta",
+                    text=hover_texts,
+                    hoverinfo="text"
+                ))
+                
+                fig_mapa.update_layout(
+                    title_text="Mapa de la Ruta (Pasa el cursor por encima de la línea)",
+                    map_style="open-street-map",
+                    map_zoom=6.5,
+                    map_center={"lat": sum(lats)/len(lats), "lon": sum(lngs)/len(lngs)},
+                    margin={"r":0, "t":40, "l":0, "b":0},
+                    height=500
+                )
+                
+                st.plotly_chart(fig_mapa, use_container_width=True)
                 
                 # --- 5. MOSTRAR LOS DESPLEGABLES DE LOS TRAMOS ---
                 st.markdown("### Detalles por tramo")
