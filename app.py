@@ -109,6 +109,8 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                     height=450
                 )
                 
+                # Mostrar el mapa en Streamlit
+                st.plotly_chart(fig_mapa, use_container_width=True)
                 
                 # --- VARIABLES PARA LA GRÁFICA ---
                 # (Aquí continúa el código que ya tenías: x_dist = [0], y_elev = [], etc.)
