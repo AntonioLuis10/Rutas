@@ -1,16 +1,25 @@
-from flask import Flask, render_template, request, jsonify
+import streamlit as st
 import googlemaps
 import requests
 import math
+import re
+from datetime import datetime, timedelta
 
-app = Flask(__name__)
+# 1. Configuración de la página
+st.set_page_config(page_title="Telemetría de Ruta", page_icon="🚴")
+st.title("Estimador de Consumo y Viento por Tramos")
 
-# Configura tu clave de API de Google Maps aquí
-GMAPS_API_KEY = 'AIzaSyDvOjU-n5y68Z0fLipExIiL9pON-OxtEmk'
+# 2. Cargar API Key de forma segura desde los secretos de Streamlit
+try:
+    GMAPS_API_KEY = st.secrets["GMAPS_API_KEY"]
+except KeyError:
+    st.error("Falta configurar la GMAPS_API_KEY en los Secrets de Streamlit.")
+    st.stop()
+
 gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
+# --- FUNCIONES AUXILIARES ---
 def calcular_bearing(lat1, lon1, lat2, lon2):
-    """Calcula el rumbo (bearing) de un punto a otro en grados."""
     lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
     dlon = lon2 - lon1
     x = math.sin(dlon) * math.cos(lat2)
@@ -18,75 +27,95 @@ def calcular_bearing(lat1, lon1, lat2, lon2):
     initial_bearing = math.atan2(x, y)
     return (math.degrees(initial_bearing) + 360) % 360
 
-def obtener_datos_viento(lat, lon):
-    """Obtiene la velocidad y dirección del viento actual usando Open-Meteo."""
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+def redondear_hora(dt):
+    if dt.minute >= 30:
+        dt += timedelta(hours=1)
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+def obtener_datos_viento_futuro(lat, lon, hora_estimada):
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&hourly=windspeed_10m,winddirection_10m&timezone=auto"
     response = requests.get(url).json()
-    if 'current_weather' in response:
-        return (response['current_weather']['windspeed'], 
-                response['current_weather']['winddirection'])
+    if 'hourly' in response:
+        tiempos = response['hourly']['time']
+        hora_redondeada = redondear_hora(hora_estimada)
+        hora_str = hora_redondeada.strftime('%Y-%m-%dT%H:00')
+        try:
+            indice = tiempos.index(hora_str)
+            return response['hourly']['windspeed_10m'][indice], response['hourly']['winddirection_10m'][indice]
+        except ValueError:
+            return 0, 0
     return 0, 0
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# --- INTERFAZ DE USUARIO ---
+col1, col2 = st.columns(2)
+with col1:
+    origen = st.text_input("Origen", placeholder="Ej. València")
+    fecha_salida = st.date_input("Fecha de salida", datetime.today())
+with col2:
+    destino = st.text_input("Destino", placeholder="Ej. Cullera")
+    hora_salida_input = st.time_input("Hora de salida", datetime.now().time())
 
-@app.route('/analizar_ruta', methods=['POST'])
-def analizar_ruta():
-    datos = request.json
-    origen = datos['origen']
-    destino = datos['destino']
+vel_media = st.number_input("Velocidad media estimada (km/h)", min_value=1.0, value=25.0, step=1.0)
 
-    # 1. Obtener la ruta de Google Maps
-    directions = gmaps.directions(origen, destino, mode="bicycling")
-    if not directions:
-        return jsonify({"error": "No se encontró la ruta"}), 400
+# --- BOTÓN Y LÓGICA DE CÁLCULO ---
+if st.button("Analizar Ruta Dinámica", type="primary"):
+    if not origen or not destino:
+        st.warning("Por favor, introduce origen y destino.")
+    else:
+        with st.spinner('Calculando tiempos, elevación y vectores aerodinámicos...'):
+            hora_actual_ruta = datetime.combine(fecha_salida, hora_salida_input)
+            
+            try:
+                directions = gmaps.directions(origen, destino, mode="bicycling")
+            except Exception as e:
+                st.error(f"Error con Google Maps: {e}")
+                st.stop()
 
-    pasos = directions[0]['legs'][0]['steps']
-    tramos_analizados = []
-    elevacion_total = 0
-
-    for paso in pasos:
-        lat1, lon1 = paso['start_location']['lat'], paso['start_location']['lng']
-        lat2, lon2 = paso['end_location']['lat'], paso['end_location']['lng']
-        
-        # 2. Calcular Rumbo (Bearing) del tramo
-        bearing = calcular_bearing(lat1, lon1, lat2, lon2)
-        
-        # 3. Obtener el viento en el punto medio del tramo
-        lat_media, lon_media = (lat1 + lat2) / 2, (lon1 + lon2) / 2
-        vel_viento, dir_viento = obtener_datos_viento(lat_media, lon_media)
-        
-        # 4. Cálculo Vectorial del Viento
-        # En meteorología, la dirección es de dónde VIENE el viento. 
-        # Si el bearing y la dirección del viento coinciden, el ángulo es 0 = Viento en contra puro.
-        angulo_relativo = math.radians(dir_viento - bearing)
-        
-        viento_en_contra = vel_viento * math.cos(angulo_relativo)
-        viento_lateral = vel_viento * math.sin(angulo_relativo)
-
-        # 5. Obtener desnivel del tramo (Elevación)
-        coords = [(lat1, lon1), (lat2, lon2)]
-        elevation_data = gmaps.elevation(coords)
-        desnivel_tramo = elevation_data[1]['elevation'] - elevation_data[0]['elevation']
-        elevacion_total += max(0, desnivel_tramo) # Sumar solo subidas
-
-        # Clasificación del tramo para el consumo
-        estado_terreno = "Subida" if desnivel_tramo > 2 else "Bajada" if desnivel_tramo < -2 else "Llano"
-        
-        tramos_analizados.append({
-            "instruccion": paso['html_instructions'],
-            "distancia": paso['distance']['text'],
-            "estado_terreno": estado_terreno,
-            "desnivel_metros": round(desnivel_tramo, 1),
-            "viento_en_contra_kmh": round(viento_en_contra, 1), # Positivo: en contra, Negativo: a favor
-            "viento_lateral_kmh": round(abs(viento_lateral), 1)
-        })
-
-    return jsonify({
-        "desnivel_acumulado": round(elevacion_total, 1),
-        "tramos": tramos_analizados
-    })
-
-if __name__ == '__main__':
-    app.run(debug=True)
+            if not directions:
+                st.error("No se encontró una ruta ciclista entre esos puntos.")
+            else:
+                pasos = directions[0]['legs'][0]['steps']
+                elevacion_total = 0
+                
+                st.subheader("Resultados de la Telemetría")
+                
+                for i, paso in enumerate(pasos):
+                    lat1, lon1 = paso['start_location']['lat'], paso['start_location']['lng']
+                    lat2, lon2 = paso['end_location']['lat'], paso['end_location']['lng']
+                    
+                    # Cálculo de tiempos
+                    distancia_km = paso['distance']['value'] / 1000.0
+                    tiempo_tramo_horas = distancia_km / vel_media
+                    hora_mitad_tramo = hora_actual_ruta + timedelta(hours=tiempo_tramo_horas / 2)
+                    
+                    # Cálculos físicos y meteorológicos
+                    bearing = calcular_bearing(lat1, lon1, lat2, lon2)
+                    vel_viento, dir_viento = obtener_datos_viento_futuro((lat1+lat2)/2, (lon1+lon2)/2, hora_mitad_tramo)
+                    
+                    angulo_relativo = math.radians(dir_viento - bearing)
+                    viento_en_contra = vel_viento * math.cos(angulo_relativo)
+                    viento_lateral = vel_viento * math.sin(angulo_relativo)
+                    
+                    # Elevación
+                    coords = [(lat1, lon1), (lat2, lon2)]
+                    elevation_data = gmaps.elevation(coords)
+                    desnivel_tramo = elevation_data[1]['elevation'] - elevation_data[0]['elevation']
+                    elevacion_total += max(0, desnivel_tramo)
+                    
+                    estado_terreno = "Subida 📈" if desnivel_tramo > 2 else "Bajada 📉" if desnivel_tramo < -2 else "Llano ➖"
+                    
+                    # Limpiar etiquetas HTML que devuelve Google Maps
+                    instruccion_limpia = re.sub(r'<[^>]+>', '', paso['html_instructions'])
+                    
+                    color_viento = "red" if viento_en_contra > 0 else "green"
+                    tipo_viento = "en contra" if viento_en_contra > 0 else "a favor"
+                    
+                    # Mostrar tramo desplegable
+                    with st.expander(f"⏱️ {hora_actual_ruta.strftime('%H:%M')} | {instruccion_limpia} ({paso['distance']['text']})"):
+                        st.markdown(f"**🚵 Terreno:** {estado_terreno} (Desnivel: {round(desnivel_tramo, 1)}m)")
+                        st.markdown(f"**🌬️ Aerodinámica:** <span style='color:{color_viento}'>Viento {tipo_viento}: {round(abs(viento_en_contra), 1)} km/h</span> | Viento lateral: {round(abs(viento_lateral), 1)} km/h", unsafe_allow_html=True)
+                    
+                    hora_actual_ruta += timedelta(hours=tiempo_tramo_horas)
+                
+                # Resumen final
+                st.success(f"**Desnivel positivo total:** {round(elevacion_total, 1)} m | **Hora estimada de llegada:** {hora_actual_ruta.strftime('%H:%M')}")
