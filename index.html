@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telemetría de Ruta y Consumo</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f4f4f9; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        input, button { padding: 10px; margin: 10px 0; width: 100%; box-sizing: border-box; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        .tramo { border-bottom: 1px solid #ddd; padding: 10px 0; }
+        .bad-wind { color: red; font-weight: bold; }
+        .good-wind { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Estimador de Consumo y Condiciones Meteorológicas</h2>
+        <input type="text" id="origen" placeholder="Origen (ej. València)">
+        <input type="text" id="destino" placeholder="Destino (ej. Cullera)">
+        <button onclick="calcularRuta()">Analizar Ruta</button>
+
+        <h3 id="resumen"></h3>
+        <div id="resultados"></div>
+    </div>
+
+    <script>
+        async function calcularRuta() {
+            const origen = document.getElementById('origen').value;
+            const destino = document.getElementById('destino').value;
+            const resultadosDiv = document.getElementById('resultados');
+            const resumenDiv = document.getElementById('resumen');
+            
+            resultadosDiv.innerHTML = "<p>Calculando vectores de viento y perfiles de elevación...</p>";
+            
+            const response = await fetch('/analizar_ruta', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ origen, destino })
+            });
+            
+            const data = await response.json();
+            
+            if(data.error) {
+                resultadosDiv.innerHTML = `<p style="color:red;">${data.error}</p>`;
+                return;
+            }
+
+            resumenDiv.innerHTML = `Desnivel positivo acumulado: ${data.desnivel_acumulado} m`;
+            resultadosDiv.innerHTML = '';
+
+            data.tramos.forEach((tramo, index) => {
+                // Dar formato visual al viento
+                let vientoStr = "";
+                if (tramo.viento_en_contra_kmh > 0) {
+                    vientoStr = `<span class="bad-wind">Viento en contra: ${tramo.viento_en_contra_kmh} km/h</span>`;
+                } else {
+                    vientoStr = `<span class="good-wind">Viento a favor: ${Math.abs(tramo.viento_en_contra_kmh)} km/h</span>`;
+                }
+
+                resultadosDiv.innerHTML += `
+                    <div class="tramo">
+                        <strong>Tramo ${index + 1}:</strong> ${tramo.instruccion} (${tramo.distancia})<br>
+                        🚵 <strong>Terreno:</strong> ${tramo.estado_terreno} (Desnivel: ${tramo.desnivel_metros}m)<br>
+                        🌬️ <strong>Aerodinámica:</strong> ${vientoStr} | Viento lateral: ${tramo.viento_lateral_kmh} km/h
+                    </div>
+                `;
+            });
+        }
+    </script>
+</body>
+</html>
