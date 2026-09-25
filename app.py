@@ -79,38 +79,49 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 
                 st.subheader("Resultados de la Telemetría")
                 
+                # --- VARIABLES DE OPTIMIZACIÓN ---
+                distancia_desde_ultimo_clima = 0
+                FRECUENCIA_CLIMA_KM = 12.0  # Consultar clima solo cada 12 km
+                vel_viento_actual = 0
+                dir_viento_actual = 0
+                
                 for i, paso in enumerate(pasos):
                     lat1, lon1 = paso['start_location']['lat'], paso['start_location']['lng']
                     lat2, lon2 = paso['end_location']['lat'], paso['end_location']['lng']
                     
-                    # Cálculo de tiempos
                     distancia_km = paso['distance']['value'] / 1000.0
                     tiempo_tramo_horas = distancia_km / vel_media
                     hora_mitad_tramo = hora_actual_ruta + timedelta(hours=tiempo_tramo_horas / 2)
                     
-                    # Cálculos físicos y meteorológicos
+                    # --- LÓGICA DE CACHÉ METEOROLÓGICA ---
+                    # Solo hace la llamada a la API si es el primer tramo o si hemos recorrido más de 12 km
+                    if i == 0 or distancia_desde_ultimo_clima >= FRECUENCIA_CLIMA_KM:
+                        vel_viento_actual, dir_viento_actual = obtener_datos_viento_futuro(
+                            (lat1+lat2)/2, (lon1+lon2)/2, hora_mitad_tramo
+                        )
+                        distancia_desde_ultimo_clima = 0 # Reiniciamos el contador
+                    
+                    distancia_desde_ultimo_clima += distancia_km
+                    
+                    # Cálculos físicos con el viento guardado en caché
                     bearing = calcular_bearing(lat1, lon1, lat2, lon2)
-                    vel_viento, dir_viento = obtener_datos_viento_futuro((lat1+lat2)/2, (lon1+lon2)/2, hora_mitad_tramo)
+                    angulo_relativo = math.radians(dir_viento_actual - bearing)
                     
-                    angulo_relativo = math.radians(dir_viento - bearing)
-                    viento_en_contra = vel_viento * math.cos(angulo_relativo)
-                    viento_lateral = vel_viento * math.sin(angulo_relativo)
+                    viento_en_contra = vel_viento_actual * math.cos(angulo_relativo)
+                    viento_lateral = vel_viento_actual * math.sin(angulo_relativo)
                     
-                    # Elevación
+                    # Elevación (La API de Google Maps procesa esto rapidísimo, no es problema)
                     coords = [(lat1, lon1), (lat2, lon2)]
                     elevation_data = gmaps.elevation(coords)
                     desnivel_tramo = elevation_data[1]['elevation'] - elevation_data[0]['elevation']
                     elevacion_total += max(0, desnivel_tramo)
                     
                     estado_terreno = "Subida 📈" if desnivel_tramo > 2 else "Bajada 📉" if desnivel_tramo < -2 else "Llano ➖"
-                    
-                    # Limpiar etiquetas HTML que devuelve Google Maps
                     instruccion_limpia = re.sub(r'<[^>]+>', '', paso['html_instructions'])
                     
                     color_viento = "red" if viento_en_contra > 0 else "green"
                     tipo_viento = "en contra" if viento_en_contra > 0 else "a favor"
                     
-                    # Mostrar tramo desplegable
                     with st.expander(f"⏱️ {hora_actual_ruta.strftime('%H:%M')} | {instruccion_limpia} ({paso['distance']['text']})"):
                         st.markdown(f"**🚵 Terreno:** {estado_terreno} (Desnivel: {round(desnivel_tramo, 1)}m)")
                         st.markdown(f"**🌬️ Aerodinámica:** <span style='color:{color_viento}'>Viento {tipo_viento}: {round(abs(viento_en_contra), 1)} km/h</span> | Viento lateral: {round(abs(viento_lateral), 1)} km/h", unsafe_allow_html=True)
