@@ -91,26 +91,24 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 lats = [punto['lat'] for punto in ruta_coords]
                 lngs = [punto['lng'] for punto in ruta_coords]
                 
-                # Crear el mapa con Plotly
-                fig_mapa = go.Figure(go.Scattermapbox(
+                # Crear el mapa con Plotly usando el nuevo motor Scattermap
+                fig_mapa = go.Figure(go.Scattermap(
                     mode="lines",
                     lon=lngs,
                     lat=lats,
-                    line=dict(width=5, color='#E50914'), # Color rojo para que resalte
+                    line=dict(width=5, color='#E50914'),
                     name="Ruta"
                 ))
                 
-                # Configurar la vista del mapa (estilo OpenStreetMap que es 100% gratuito)
+                # Configurar la vista del mapa con los nuevos parámetros
                 fig_mapa.update_layout(
-                    mapbox_style="open-street-map",
-                    mapbox_zoom=6.5,
-                    mapbox_center={"lat": sum(lats)/len(lats), "lon": sum(lngs)/len(lngs)},
+                    map_style="open-street-map",
+                    map_zoom=6.5,
+                    map_center={"lat": sum(lats)/len(lats), "lon": sum(lngs)/len(lngs)},
                     margin={"r":0, "t":0, "l":0, "b":0},
                     height=450
                 )
                 
-                # Mostrar el mapa en Streamlit
-                st.plotly_chart(fig_mapa, use_container_width=True)
                 
                 # --- VARIABLES PARA LA GRÁFICA ---
                 # (Aquí continúa el código que ya tenías: x_dist = [0], y_elev = [], etc.)
