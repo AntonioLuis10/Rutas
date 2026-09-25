@@ -84,97 +84,86 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 pasos = directions[0]['legs'][0]['steps']
                 elevacion_total = 0
                 
-                st.subheader("Resultados de la Telemetría (Mapa Interactivo)")
+                st.subheader("Resultados de la Telemetría de Alta Resolución")
                 
-                # --- 1. PREPARACIÓN DE VARIABLES GLOBALES ---
-                ruta_coords = googlemaps.convert.decode_polyline(directions[0]['overview_polyline']['points'])
+                # --- 1. PREPARACIÓN DE LA RUTA GEOMÉTRICA ---
+                poly_str = directions[0]['overview_polyline']['points']
+                ruta_coords = googlemaps.convert.decode_polyline(poly_str)
                 lats = [punto['lat'] for punto in ruta_coords]
                 lngs = [punto['lng'] for punto in ruta_coords]
                 
-                x_dist = [0]
+                # --- 2. CÁLCULO CONTINUO PARA GRÁFICAS (150 Puntos) ---
+                muestras = 150  # Un punto en la gráfica aprox. cada 2 km en rutas largas
+                datos_elevacion = gmaps.elevation_along_path(poly_str, samples=muestras)
+                
+                distancia_total_km = directions[0]['legs'][0]['distance']['value'] / 1000.0
+                dist_por_muestra = distancia_total_km / (muestras - 1)
+                
+                x_dist = []
                 y_elev = []
-                y_wind = [0]
-                dist_acumulada = 0
+                y_wind = []
                 
-                coord_inicio = (pasos[0]['start_location']['lat'], pasos[0]['start_location']['lng'])
-                elev_inicio = gmaps.elevation([coord_inicio])[0]['elevation']
-                y_elev.append(elev_inicio)
+                dist_clima_acumulada = 1000 # Forzamos la lectura de Open-Meteo en el punto 0
+                FRECUENCIA_CLIMA_KM = 330  
+                vel_viento_actual, dir_viento_actual = 0, 0
+                elevacion_total = 0
                 
-                distancia_desde_ultimo_clima = 0
-                FRECUENCIA_CLIMA_KM = 330.0
-                vel_viento_actual = 0
-                dir_viento_actual = 0
-                tramos_ui = []
-                
-                # --- 2. PROCESAMIENTO TRAMO A TRAMO ---
-                for i, paso in enumerate(pasos):
-                    lat1, lon1 = paso['start_location']['lat'], paso['start_location']['lng']
-                    lat2, lon2 = paso['end_location']['lat'], paso['end_location']['lng']
+                for i in range(muestras):
+                    lat = datos_elevacion[i]['location']['lat']
+                    lon = datos_elevacion[i]['location']['lng']
+                    elev = datos_elevacion[i]['elevation']
                     
-                    distancia_km = paso['distance']['value'] / 1000.0
-                    tiempo_tramo_horas = distancia_km / vel_media
-                    hora_mitad_tramo = hora_actual_ruta + timedelta(hours=tiempo_tramo_horas / 2)
-                    
-                    if i == 0 or distancia_desde_ultimo_clima >= FRECUENCIA_CLIMA_KM:
-                        vel_viento_actual, dir_viento_actual = obtener_datos_viento_futuro(
-                            (lat1+lat2)/2, (lon1+lon2)/2, hora_mitad_tramo
-                        )
-                        distancia_desde_ultimo_clima = 0
-                    
-                    distancia_desde_ultimo_clima += distancia_km
-                    
-                    bearing = calcular_bearing(lat1, lon1, lat2, lon2)
-                    angulo_relativo = math.radians(dir_viento_actual - bearing)
-                    
-                    viento_en_contra = vel_viento_actual * math.cos(angulo_relativo)
-                    viento_lateral = vel_viento_actual * math.sin(angulo_relativo)
-                    
-                    coords = [(lat1, lon1), (lat2, lon2)]
-                    elevation_data = gmaps.elevation(coords)
-                    elevacion_final_tramo = elevation_data[1]['elevation']
-                    desnivel_tramo = elevacion_final_tramo - elevation_data[0]['elevation']
-                    elevacion_total += max(0, desnivel_tramo)
-                    
-                    # Guardar datos para la gráfica
-                    dist_acumulada += distancia_km
+                    dist_acumulada = i * dist_por_muestra
                     x_dist.append(dist_acumulada)
-                    y_elev.append(elevacion_final_tramo)
+                    y_elev.append(elev)
+                    
+                    # Sumar desnivel positivo continuo
+                    if i > 0:
+                        desnivel = max(0, elev - y_elev[i-1])
+                        elevacion_total += desnivel
+                        
+                    # Rumbo (bearing) de alta resolución entre puntos cercanos
+                    if i < muestras - 1:
+                        next_lat = datos_elevacion[i+1]['location']['lat']
+                        next_lon = datos_elevacion[i+1]['location']['lng']
+                        bearing = calcular_bearing(lat, lon, next_lat, next_lon)
+                    else:
+                        prev_lat = datos_elevacion[i-1]['location']['lat']
+                        prev_lon = datos_elevacion[i-1]['location']['lng']
+                        bearing = calcular_bearing(prev_lat, prev_lon, lat, lon)
+                    
+                    # Caché meteorológica: consulta Open-Meteo solo cada 12 km
+                    if dist_clima_acumulada >= FRECUENCIA_CLIMA_KM:
+                        tiempo_horas = dist_acumulada / vel_media
+                        hora_estimada = hora_actual_ruta + timedelta(hours=tiempo_horas)
+                        vel_viento_actual, dir_viento_actual = obtener_datos_viento_futuro(lat, lon, hora_estimada)
+                        dist_clima_acumulada = 0
+                    
+                    dist_clima_acumulada += dist_por_muestra
+                    
+                    # El ángulo relativo se calcula SIEMPRE, adaptándose a las curvas
+                    angulo_relativo = math.radians(dir_viento_actual - bearing)
+                    viento_en_contra = vel_viento_actual * math.cos(angulo_relativo)
                     y_wind.append(viento_en_contra)
-                    
-                    # Formatear el texto de la interfaz
-                    estado_terreno = "Subida 📈" if desnivel_tramo > 2 else "Bajada 📉" if desnivel_tramo < -2 else "Llano ➖"
-                    instruccion_limpia = re.sub(r'<[^>]+>', '', paso['html_instructions'])
-                    color_viento = "red" if viento_en_contra > 0 else "green"
-                    tipo_viento = "en contra" if viento_en_contra > 0 else "a favor"
-                    
-                    tramo_html = {
-                        "titulo": f"⏱️ {hora_actual_ruta.strftime('%H:%M')} | {instruccion_limpia} ({paso['distance']['text']})",
-                        "terreno": f"**🚗 Terreno:** {estado_terreno} (Desnivel: {round(desnivel_tramo, 1)}m)",
-                        "viento": f"**🌬️ Aerodinámica:** <span style='color:{color_viento}'>Viento {tipo_viento}: {round(abs(viento_en_contra), 1)} km/h</span> | Viento lateral: {round(abs(viento_lateral), 1)} km/h"
-                    }
-                    tramos_ui.append(tramo_html)
-                    
-                    hora_actual_ruta += timedelta(hours=tiempo_tramo_horas)
-                
+
                 # --- 3. DIBUJAR LA GRÁFICA INTERACTIVA ---
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
-                fig.add_trace(go.Scatter(x=x_dist, y=y_elev, name="Elevación (m)", fill='tozeroy', mode='lines', line=dict(color='rgba(150, 150, 150, 0.8)')), secondary_y=False)
-                fig.add_trace(go.Scatter(x=x_dist, y=y_wind, name="Viento en contra (km/h)", mode='lines', line=dict(color='red', width=2)), secondary_y=True)
+                # shape='spline' suaviza las líneas para un acabado más profesional
+                fig.add_trace(go.Scatter(x=x_dist, y=y_elev, name="Elevación (m)", fill='tozeroy', mode='lines', line=dict(color='rgba(150, 150, 150, 0.8)', shape='spline')), secondary_y=False)
+                fig.add_trace(go.Scatter(x=x_dist, y=y_wind, name="Viento en contra (km/h)", mode='lines', line=dict(color='red', width=2, shape='spline')), secondary_y=True)
                 
-                fig.update_layout(title_text="Telemetría: Elevación vs Resistencia Aerodinámica", hovermode="x unified")
+                fig.update_layout(title_text="Telemetría Continua: Elevación vs Viento", hovermode="x unified")
                 fig.update_xaxes(title_text="Distancia recorrida (km)")
                 fig.update_yaxes(title_text="Elevación (m)", secondary_y=False)
                 fig.update_yaxes(title_text="Viento (km/h) [+ Contra / - A favor]", secondary_y=True)
                 
                 st.plotly_chart(fig, use_container_width=True)
 
-                # --- 4. MAPA CON HOVER DE DATOS EN LA RUTA ---
-                # Alinear los datos interpolando (simplificado) para que coincidan con la ruta geométrica completa
+                # --- 4. MAPA CON HOVER SINCRONIZADO ---
                 hover_texts = []
-                # Distribuimos los datos a lo largo de los puntos del mapa de forma aproximada
-                puntos_por_tramo = max(1, len(lats) // len(y_elev))
+                puntos_por_tramo = max(1, len(lats) // muestras)
                 for i in range(len(lats)):
-                    idx_aprox = min(i // puntos_por_tramo, len(y_elev) - 1)
+                    idx_aprox = min(i // puntos_por_tramo, muestras - 1)
                     viento_redondeado = round(y_wind[idx_aprox], 1)
                     tipo_viento_hover = "Viento en contra" if viento_redondeado > 0 else "Viento a favor"
                     
@@ -188,28 +177,33 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                     lon=lngs,
                     lat=lats,
                     line=dict(width=4, color='#E50914'),
-                    marker=dict(size=4, opacity=0), # Marcadores invisibles, solo sirven para captar el ratón
+                    marker=dict(size=4, opacity=0),
                     name="Ruta",
                     text=hover_texts,
                     hoverinfo="text"
                 ))
                 
                 fig_mapa.update_layout(
-                    title_text="Mapa de la Ruta (Pasa el cursor por encima de la línea)",
+                    title_text="Mapa Interactivo de la Ruta",
                     map_style="open-street-map",
                     map_zoom=6.5,
                     map_center={"lat": sum(lats)/len(lats), "lon": sum(lngs)/len(lngs)},
                     margin={"r":0, "t":40, "l":0, "b":0},
                     height=500
                 )
-                
                 st.plotly_chart(fig_mapa, use_container_width=True)
                 
-                # --- 5. MOSTRAR LOS DESPLEGABLES DE LOS TRAMOS ---
+                # --- 5. TEXTOS DESPLEGABLES (Navegación pura) ---
                 st.markdown("### Detalles por tramo")
-                for tramo in tramos_ui:
-                    with st.expander(tramo["titulo"]):
-                        st.markdown(tramo["terreno"])
-                        st.markdown(tramo["viento"], unsafe_allow_html=True)
+                hora_paso_actual = hora_actual_ruta
+                for paso in pasos:
+                    distancia_km = paso['distance']['value'] / 1000.0
+                    tiempo_tramo_horas = distancia_km / vel_media
+                    instruccion_limpia = re.sub(r'<[^>]+>', '', paso['html_instructions'])
+                    
+                    with st.expander(f"⏱️ {hora_paso_actual.strftime('%H:%M')} | {instruccion_limpia} ({paso['distance']['text']})"):
+                        st.markdown(f"**Indicación GPS:** Continúa por esta vía durante {paso['distance']['text']}.")
+                    
+                    hora_paso_actual += timedelta(hours=tiempo_tramo_horas)
                 
-                st.success(f"**Desnivel positivo total:** {round(elevacion_total, 1)} m | **Hora estimada de llegada:** {hora_actual_ruta.strftime('%H:%M')}")
+                st.success(f"**Desnivel positivo total:** {round(elevacion_total, 1)} m | **Hora estimada de llegada:** {hora_paso_actual.strftime('%H:%M')}")
