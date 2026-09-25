@@ -56,6 +56,7 @@ with col2:
     hora_salida_input = st.time_input("Hora de salida", datetime.now().time())
 
 vel_media = st.number_input("Velocidad media estimada (km/h)", min_value=1.0, value=25.0, step=1.0)
+evitar_peajes = st.checkbox("Evitar peajes de pago", value=False)
 
 # --- BOTÓN Y LÓGICA DE CÁLCULO ---
 if st.button("Analizar Ruta Dinámica", type="primary"):
@@ -66,7 +67,10 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
             hora_actual_ruta = datetime.combine(fecha_salida, hora_salida_input)
             
             try:
-                directions = gmaps.directions(origen, destino, mode="bicycling")
+                if evitar_peajes:
+    directions = gmaps.directions(origen, destino, mode="driving", avoid="tolls")
+else:
+    directions = gmaps.directions(origen, destino, mode="driving")
             except Exception as e:
                 st.error(f"Error con Google Maps: {e}")
                 st.stop()
