@@ -85,109 +85,35 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 
                 st.subheader("Resultados de la Telemetría")
                 
+                # --- DIBUJAR EL MAPA DE LA RUTA ---
+                # Extraer y decodificar la línea geométrica de la ruta
+                ruta_coords = googlemaps.convert.decode_polyline(directions[0]['overview_polyline']['points'])
+                lats = [punto['lat'] for punto in ruta_coords]
+                lngs = [punto['lng'] for punto in ruta_coords]
+                
+                # Crear el mapa con Plotly
+                fig_mapa = go.Figure(go.Scattermapbox(
+                    mode="lines",
+                    lon=lngs,
+                    lat=lats,
+                    line=dict(width=5, color='#E50914'), # Color rojo para que resalte
+                    name="Ruta"
+                ))
+                
+                # Configurar la vista del mapa (estilo OpenStreetMap que es 100% gratuito)
+                fig_mapa.update_layout(
+                    mapbox_style="open-street-map",
+                    mapbox_zoom=6.5,
+                    mapbox_center={"lat": sum(lats)/len(lats), "lon": sum(lngs)/len(lngs)},
+                    margin={"r":0, "t":0, "l":0, "b":0},
+                    height=450
+                )
+                
+                # Mostrar el mapa en Streamlit
+                st.plotly_chart(fig_mapa, use_container_width=True)
+                
                 # --- VARIABLES PARA LA GRÁFICA ---
-                x_dist = [0]
-                y_elev = []
-                y_wind = [0]
-                dist_acumulada = 0
-                
-                # Obtener la elevación del punto de salida exacto (km 0)
-                coord_inicio = (pasos[0]['start_location']['lat'], pasos[0]['start_location']['lng'])
-                elev_inicio = gmaps.elevation([coord_inicio])[0]['elevation']
-                y_elev.append(elev_inicio)
-                
-                # --- VARIABLES DE OPTIMIZACIÓN METEOROLÓGICA ---
-                distancia_desde_ultimo_clima = 0
-                FRECUENCIA_CLIMA_KM = 12.0  
-                vel_viento_actual = 0
-                dir_viento_actual = 0
-                
-                # Para guardar los expansores y mostrarlos debajo de la gráfica
-                tramos_ui = []
-                
-                for i, paso in enumerate(pasos):
-                    lat1, lon1 = paso['start_location']['lat'], paso['start_location']['lng']
-                    lat2, lon2 = paso['end_location']['lat'], paso['end_location']['lng']
-                    
-                    distancia_km = paso['distance']['value'] / 1000.0
-                    tiempo_tramo_horas = distancia_km / vel_media
-                    hora_mitad_tramo = hora_actual_ruta + timedelta(hours=tiempo_tramo_horas / 2)
-                    
-                    if i == 0 or distancia_desde_ultimo_clima >= FRECUENCIA_CLIMA_KM:
-                        vel_viento_actual, dir_viento_actual = obtener_datos_viento_futuro(
-                            (lat1+lat2)/2, (lon1+lon2)/2, hora_mitad_tramo
-                        )
-                        distancia_desde_ultimo_clima = 0
-                    
-                    distancia_desde_ultimo_clima += distancia_km
-                    
-                    bearing = calcular_bearing(lat1, lon1, lat2, lon2)
-                    angulo_relativo = math.radians(dir_viento_actual - bearing)
-                    
-                    viento_en_contra = vel_viento_actual * math.cos(angulo_relativo)
-                    viento_lateral = vel_viento_actual * math.sin(angulo_relativo)
-                    
-                    coords = [(lat1, lon1), (lat2, lon2)]
-                    elevation_data = gmaps.elevation(coords)
-                    elevacion_final_tramo = elevation_data[1]['elevation']
-                    desnivel_tramo = elevacion_final_tramo - elevation_data[0]['elevation']
-                    elevacion_total += max(0, desnivel_tramo)
-                    
-                    # --- GUARDAR DATOS PARA LA GRÁFICA ---
-                    dist_acumulada += distancia_km
-                    x_dist.append(dist_acumulada)
-                    y_elev.append(elevacion_final_tramo)
-                    y_wind.append(viento_en_contra)
-                    
-                    # --- PREPARAR INTERFAZ DE TRAMOS ---
-                    estado_terreno = "Subida 📈" if desnivel_tramo > 2 else "Bajada 📉" if desnivel_tramo < -2 else "Llano ➖"
-                    instruccion_limpia = re.sub(r'<[^>]+>', '', paso['html_instructions'])
-                    color_viento = "red" if viento_en_contra > 0 else "green"
-                    tipo_viento = "en contra" if viento_en_contra > 0 else "a favor"
-                    
-                    tramo_html = {
-                        "titulo": f"⏱️ {hora_actual_ruta.strftime('%H:%M')} | {instruccion_limpia} ({paso['distance']['text']})",
-                        "terreno": f"**🚗 Terreno:** {estado_terreno} (Desnivel: {round(desnivel_tramo, 1)}m)",
-                        "viento": f"**🌬️ Aerodinámica:** <span style='color:{color_viento}'>Viento {tipo_viento}: {round(abs(viento_en_contra), 1)} km/h</span> | Viento lateral: {round(abs(viento_lateral), 1)} km/h"
-                    }
-                    tramos_ui.append(tramo_html)
-                    
-                    hora_actual_ruta += timedelta(hours=tiempo_tramo_horas)
-                
-                # --- DIBUJAR LA GRÁFICA INTERACTIVA ---
-                fig = make_subplots(specs=[[{"secondary_y": True}]])
-                
-                # Añadir perfil de elevación (Eje Y izquierdo, área gris)
-                fig.add_trace(
-                    go.Scatter(x=x_dist, y=y_elev, name="Elevación (m)", fill='tozeroy', 
-                               mode='lines', line=dict(color='rgba(150, 150, 150, 0.8)')),
-                    secondary_y=False,
-                )
-                
-                # Añadir perfil aerodinámico (Eje Y derecho, línea roja)
-                fig.add_trace(
-                    go.Scatter(x=x_dist, y=y_wind, name="Viento en contra (km/h)", 
-                               mode='lines', line=dict(color='red', width=2)),
-                    secondary_y=True,
-                )
-                
-                # Configurar títulos de los ejes
-                fig.update_layout(title_text="Telemetría: Elevación vs Resistencia Aerodinámica", hovermode="x unified")
-                fig.update_xaxes(title_text="Distancia recorrida (km)")
-                fig.update_yaxes(title_text="Elevación (m)", secondary_y=False)
-                fig.update_yaxes(title_text="Viento (km/h) [+ Contra / - A favor]", secondary_y=True)
-                
-                # Mostrar gráfica en Streamlit
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # --- MOSTRAR LOS DESPLEGABLES DE LOS TRAMOS ---
-                st.markdown("### Detalles por tramo")
-                for tramo in tramos_ui:
-                    with st.expander(tramo["titulo"]):
-                        st.markdown(tramo["terreno"])
-                        st.markdown(tramo["viento"], unsafe_allow_html=True)
-                
-                st.success(f"**Desnivel positivo total:** {round(elevacion_total, 1)} m | **Hora estimada de llegada:** {hora_actual_ruta.strftime('%H:%M')}")
+                # (Aquí continúa el código que ya tenías: x_dist = [0], y_elev = [], etc.)
                 
                 # Resumen final
                 st.success(f"**Desnivel positivo total:** {round(elevacion_total, 1)} m | **Hora estimada de llegada:** {hora_actual_ruta.strftime('%H:%M')}")
