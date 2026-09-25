@@ -6,7 +6,7 @@ import math
 app = Flask(__name__)
 
 # Configura tu clave de API de Google Maps aquí
-GMAPS_API_KEY = 'TU_API_KEY_DE_GOOGLE_MAPS'
+GMAPS_API_KEY = 'AIzaSyDvOjU-n5y68Z0fLipExIiL9pON-OxtEmk'
 gmaps = googlemaps.Client(key=GMAPS_API_KEY)
 
 def calcular_bearing(lat1, lon1, lat2, lon2):
