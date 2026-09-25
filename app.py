@@ -68,9 +68,9 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
             
             try:
                 if evitar_peajes:
-    directions = gmaps.directions(origen, destino, mode="driving", avoid="tolls")
-else:
-    directions = gmaps.directions(origen, destino, mode="driving")
+                    directions = gmaps.directions(origen, destino, mode="driving", avoid="tolls")
+                else:
+                    directions = gmaps.directions(origen, destino, mode="driving")
             except Exception as e:
                 st.error(f"Error con Google Maps: {e}")
                 st.stop()
