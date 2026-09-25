@@ -101,7 +101,7 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                 y_elev.append(elev_inicio)
                 
                 distancia_desde_ultimo_clima = 0
-                FRECUENCIA_CLIMA_KM = 12.0  
+                FRECUENCIA_CLIMA_KM = 100.0  
                 vel_viento_actual = 0
                 dir_viento_actual = 0
                 tramos_ui = []
