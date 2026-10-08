@@ -2,3 +2,5 @@ streamlit
 googlemaps
 requests
 plotly
+pandas
+openpyxl
