@@ -1,6 +1,8 @@
 import streamlit as st
 import googlemaps
 import requests
+import pandas as pd
+import io
 import math
 import re
 from datetime import datetime, timedelta
@@ -207,3 +209,24 @@ if st.button("Analizar Ruta Dinámica", type="primary"):
                     hora_paso_actual += timedelta(hours=tiempo_tramo_horas)
                 
                 st.success(f"**Desnivel positivo total:** {round(elevacion_total, 1)} m | **Hora estimada de llegada:** {hora_paso_actual.strftime('%H:%M')}")
+# --- 6. EXPORTAR A EXCEL ---
+                # Crear una tabla (DataFrame) con los datos continuos de la ruta
+                df_telemetria = pd.DataFrame({
+                    "Distancia Acumulada (km)": [round(x, 2) for x in x_dist],
+                    "Elevación (m)": [round(y, 1) for y in y_elev],
+                    "Viento en contra (km/h)": [round(v, 1) for v in y_wind]
+                })
+                
+                # Crear el archivo Excel en la memoria del servidor
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    df_telemetria.to_excel(writer, index=False, sheet_name='Telemetria')
+                
+                # Mostrar el botón de descarga en la web
+                st.markdown("### Descarga de Datos")
+                st.download_button(
+                    label="📥 Descargar Telemetría en Excel (.xlsx)",
+                    data=buffer.getvalue(),
+                    file_name=f"telemetria_{origen}_a_{destino}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
